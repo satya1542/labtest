@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CHIPL - MQTT</title>
+  <link rel="icon" href="https://i.ibb.co/5hWJD3cd/socket-1.png">
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Audiowide&display=swap');
+
+    /* Base styles */
+    body {
+      font-family: 'Audiowide', sans-serif;
+      background: linear-gradient(135deg, #000, #111);
+    }
+    /* Neon text effect */
+    .text-neon-text {
+      color: #00ffff; /* bright cyan */
+      text-shadow: 0 0 8px #00ffff, 0 0 16px #00ffff;
+    }
+    /* When dark mode is activated, adjust background and text for increased contrast */
+    .dark-mode {
+      background: linear-gradient(135deg, #111, #222);
+    }
+    .dark-mode .text-neon-text {
+      color: #a0f0ff; /* a slightly lighter cyan */
+      text-shadow: 0 0 6px #a0f0ff, 0 0 12px #a0f0ff;
+    }
+    /* Glassmorphism container */
+    .glass {
+      background: rgba(20, 20, 20, 0.65);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(0, 255, 255, 0.2);
+      box-shadow: 0 4px 30px rgba(0, 255, 255, 0.1);
+    }
+    /* Smooth animations */
+    .transition-all {
+      transition: all 0.3s ease-in-out;
+    }
+    .hover-glow:hover {
+      box-shadow: 0 0 15px #00ffff;
+    }
+    /* Modal styling */
+    .modal {
+      background: rgba(0, 0, 0, 0.9);
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    /* Received Messages container for virtual scrolling */
+    .messages-container {
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid rgba(0, 255, 255, 0.2);
+      padding: 10px;
+      background-color: #111;
+    }
+    .message-item {
+        padding: 5px;
+        border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+        cursor: pointer;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-neon-text p-6">
+  <header class="text-center mb-8">
+    <h1 class="text-4xl md:text-6xl uppercase neon-text animate-pulse">CHIPL</h1>
+    <p id="connectionStatus" class="inline-block px-4 py-2 mt-4 rounded-full border border-cyan-400">Disconnected</p>
+  </header>
+
+  <div class="flex justify-center mb-8">
+    <button id="darkModeToggle" class="px-4 py-2 bg-transparent border border-cyan-400 rounded hover:bg-cyan-400 hover:text-black transition-all">
+      Toggle Dark Mode
+    </button>
+  </div>
+
+  <!-- Loading Indicator -->
+  <div id="loadingIndicator" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-70 hidden z-50">
+    <div class="w-16 h-16 border-4 border-cyan-300 border-t-cyan-400 rounded-full animate-spin"></div>
+  </div>
+
+  <section class="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-8">
+    <div class="glass p-6 rounded hover-glow text-center">
+      <h3 class="text-xl uppercase">Connection</h3>
+      <p id="realTimeConnectionStatus" class="mt-2">Disconnected</p>
+    </div>
+    <div class="glass p-6 rounded hover-glow text-center">
+      <h3 class="text-xl uppercase">Subscriptions</h3>
+      <ul id="realTimeSubscriptions" class="mt-2 list-disc list-inside"></ul>
+    </div>
+    <div class="glass p-6 rounded hover-glow text-center">
+      <h3 class="text-xl uppercase">Messages</h3>
+      <p id="receivedMessageCount" class="mt-2">0</p>
+    </div>
+  </section>
+
+  <main class="container mx-auto glass p-8 rounded-lg space-y-8">
+    <!-- Broker Connection Section -->
+    <section>
+      <h2 class="text-2xl uppercase text-center mb-4">Broker Connection</h2>
+      <div class="flex flex-col sm:flex-row gap-4 mb-4">
+        <select id="protocol" class="flex-1 px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all">
+          <option value="ws://">ws://</option>
+          <option value="wss://">wss://</option>
+        </select>
+        <input type="text" id="brokerUrl" placeholder="Enter Broker URL" class="flex-1 px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all" required>
+        <input type="text" id="username" placeholder="Username" class="flex-1 px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all">
+        <input type="password" id="password" placeholder="Password" class="flex-1 px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all">
+        <input type="checkbox" id="showPassword" class="w-6 h-6 mt-2">
+      </div>
+      <div class="flex flex-wrap gap-4 justify-center">
+        <button id="connectBtn" class="px-6 py-2 border border-cyan-400 rounded hover:bg-cyan-400 hover:text-black transition-all">Connect</button>
+        <button id="disconnectBtn" class="px-6 py-2 border border-cyan-400 rounded hover:bg-cyan-400 hover:text-black transition-all">Disconnect</button>
+        <button id="resetBtn" class="px-6 py-2 border border-cyan-400 rounded hover:bg-cyan-400 hover:text-black transition-all">Reset All</button>
+      </div>
+    </section>
+
+    <!-- SSL Certificate Upload Section -->
+    <section class="space-y-4">
+      <div>
+        <label for="caCertificate" class="block">CA Certificate (Optional):</label>
+        <input type="file" id="caCertificate" accept=".pem, .crt" class="w-full px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all">
+        <p id="caFileName" class="mt-2"></p>
+      </div>
+      <div>
+        <label for="clientCertificate" class="block">Client Certificate (Optional):</label>
+        <input type="file" id="clientCertificate" accept=".pem, .crt" class="w-full px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all">
+        <p id="clientCertName" class="mt-2"></p>
+      </div>
+      <div>
+        <label for="clientKey" class="block">Client Key (Optional):</label>
+        <input type="file" id="clientKey" accept=".pem, .key" class="w-full px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all">
+        <p id="clientKeyName" class="mt-2"></p>
+      </div>
+    </section>
+
+    <!-- Subscriptions Section -->
+    <section>
+      <h2 class="text-2xl uppercase text-center mb-4">Subscriptions</h2>
+      <div class="flex flex-col sm:flex-row gap-4 mb-4">
+        <input type="text" id="subscribeTopic" placeholder="Topic (comma-separated, supports wildcards)" class="flex-1 px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all" required>
+        <button id="subscribeBtn" class="px-6 py-2 border border-cyan-400 rounded hover:bg-cyan-400 hover:text-black transition-all">Subscribe</button>
+        <button id="unsubscribeBtn" class="px-6 py-2 border border-cyan-400 rounded hover:bg-cyan-400 hover:text-black transition-all">Unsubscribe</button>
+      </div>
+      <ul id="activeSubscriptions" class="list-disc list-inside"></ul>
+    </section>
+
+    <!-- Publishing Section -->
+    <section>
+      <h2 class="text-2xl uppercase text-center mb-4">Publishing</h2>
+      <div class="flex flex-col sm:flex-row gap-4 mb-4">
+        <input type="text" id="publishTopic" placeholder="Publish Topic" class="flex-1 px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all" required>
+        <input type="text" id="publishMessage" placeholder="Message" class="flex-1 px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all" required>
+        <select id="qosLevel" class="flex-1 px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all">
+          <option value="0">QoS 0</option>
+          <option value="1">QoS 1</option>
+          <option value="2">QoS 2</option>
+        </select>
+        <button id="publishBtn" class="px-6 py-2 border border-cyan-400 rounded hover:bg-cyan-400 hover:text-black transition-all">Publish</button>
+        <div class="flex items-center">
+          <input type="checkbox" id="retainMessage" class="w-6 h-6 mr-2">
+          <label for="retainMessage">Retain Message</label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Received Messages Section with Virtual Scrolling -->
+    <section>
+      <h2 class="text-2xl uppercase text-center mb-4">Received Messages</h2>
+      <div class="flex flex-col sm:flex-row gap-4 mb-4">
+        <input type="text" id="filterMessages" placeholder="Filter messages by topic" class="flex-1 px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all">
+        <button id="clearMessagesBtn" class="px-6 py-2 border border-cyan-400 rounded hover:bg-cyan-400 hover:text-black transition-all">Clear Messages</button>
+      </div>
+      <div id="messagesContainer" class="messages-container"></div>
+      <div class="flex flex-col sm:flex-row gap-4 mt-4">
+        <select id="exportFormat" class="px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all">
+          <option value="json">Export as JSON</option>
+          <option value="xml">Export as XML</option>
+        </select>
+        <button id="exportBtn" class="px-6 py-2 border border-cyan-400 rounded hover:bg-cyan-400 hover:text-black transition-all">Export Messages</button>
+        <input type="file" id="importFile" class="px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all">
+      </div>
+    </section>
+
+    <!-- Data Chart Section -->
+    <section class="mb-8">
+      <h2 class="text-2xl uppercase text-center mb-4">Data Chart</h2>
+     <div class="flex flex-wrap items-center justify-center mb-4">
+        <div class="flex items-center gap-2 mb-2 mr-4">
+          <label for="chartType">Chart Type:</label>
+          <select id="chartType" class="px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all">
+            <option value="line">Line</option>
+            <option value="bar">Bar</option>
+            <option value="scatter">Scatter</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-2 mb-2 mr-4">
+          <label for="chartColor">Color:</label>
+          <input type="color" id="chartColor" value="#39aaaa" class="w-10 h-10 p-0 border-0">
+        </div>
+         <div class="flex items-center gap-2 mb-2">
+          <label for="dataKey">Data Key:</label>
+          <select id="dataKey" class="px-4 py-2 bg-transparent border border-cyan-400 rounded focus:outline-none transition-all">
+            <option value="">Select a Key</option>
+          </select>
+        </div>
+      </div>
+      <div class="chart-container w-full h-96 bg-black bg-opacity-70 rounded-lg border border-cyan-400 shadow-lg mb-4">
+        <canvas id="dataChart"></canvas>
+      </div>
+      <div class="text-center">
+        <button id="clearChartBtn" class="px-6 py-2 border border-cyan-400 rounded hover:bg-cyan-400 hover:text-black transition-all">Clear Chart</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal for raw message view -->
+  <div id="messageModal" class="modal fixed inset-0 flex items-center justify-center hidden z-40">
+    <div class="modal-content glass relative p-6 w-11/12 md:w-1/2 rounded">
+      <span class="close absolute top-0 right-2 text-3xl cursor-pointer">&times;</span>
+      <pre id="rawMessageContent" class="whitespace-pre-wrap"></pre>
+    </div>
+  </div>
+
+  <!-- Notification -->
+  <div id="notification" class="notification fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-cyan-400 text-black px-4 py-2 rounded shadow-lg hidden z-30"></div>
+
+  <script>
+    let client = null;
+    let subscriptions = [];
+    // Keep maximum of 20 messages. New messages are added at the top.
+    let messages = [];
+    let chartType = 'line';
+    let availableKeys = new Set(); // To store available keys from JSON messages
+    let chart = null;
+    let currentDataKey = ''; // Track the currently selected data key
+
+    // Hardcoded credentials for demo (Not for Production)
+    const validUsername = 'user';
+    const validPassword = 'password';
+
+    // Chart.js initialization
+    const chartCanvas = document.getElementById('dataChart').getContext('2d');
+    let chartData = {
+      labels: [],
+      datasets: [{
+        label: 'Data',
+        data: [],
+        borderColor: document.getElementById('chartColor').value,
+        borderWidth: 2,
+        fill: false
+      }]
+    };
+
+    let chartOptions = {
+      type: chartType,
+      data: chartData,
+      options: {
+        scales: {
+          x: {  // Add this to configure the x-axis
+            title: {
+              display: true,
+              text: 'Time'
+            }
+          },
+          y: {
+            beginAtZero: true
+          }
+        },
+        responsive: true, // Enable responsiveness
+        maintainAspectRatio: false // Disable aspect ratio maintenance
+      }
+    };
+
+    function initializeChart() {
+      chart = new Chart(chartCanvas, chartOptions);
+    }
+
+    let messageCount = 0;
+    let caCertificate = null;
+    let clientCertificate = null;
+    let clientKey = null;
+    let brokerUrl = localStorage.getItem('brokerUrl') || '';
+    document.getElementById('brokerUrl').value = brokerUrl;
+    let username = localStorage.getItem('username') || '';
+    document.getElementById('username').value = username;
+
+    function showLoadingIndicator() {
+      document.getElementById('loadingIndicator').classList.remove('hidden');
+    }
+
+    function hideLoadingIndicator() {
+      document.getElementById('loadingIndicator').classList.add('hidden');
+    }
+
+    function connectMQTT() {
+      const protocol = document.getElementById('protocol').value;
+      brokerUrl = document.getElementById('brokerUrl').value;
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      if (!brokerUrl) {
+        showNotification("Please enter a broker URL", 'error');
+        return;
+      }
+      showLoadingIndicator();
+      const fullBrokerUrl = protocol + brokerUrl;
+      const options = {
+        username: username,
+        password: password,
+        protocol: protocol.slice(0, -3),
+        clientId: 'CHIPL_' + Math.random().toString(16).substr(2, 8)
+      };
+
+      if (protocol === 'wss://') {
+        if (caCertificate) options.ca = caCertificate;
+        if (clientCertificate && clientKey) {
+          options.cert = clientCertificate;
+          options.key = clientKey;
+        } else if (clientCertificate || clientKey) {
+          showNotification("Please upload both client certificate and key for WSS.", 'error');
+          hideLoadingIndicator();
+          return;
+        }
+      }
+
+      try {
+        client = mqtt.connect(fullBrokerUrl, options);
+        client.on('connect', () => {
+          document.getElementById('connectionStatus').textContent = 'Connected';
+          document.getElementById('connectionStatus').classList.add('bg-cyan-400', 'text-black');
+          document.getElementById('realTimeConnectionStatus').textContent = 'Connected';
+          showNotification('Connected to MQTT broker', 'success');
+          hideLoadingIndicator();
+        });
+
+        client.on('message', (topic, message) => {
+          const timestamp = new Date().toLocaleTimeString(); // Only time
+          const messageString = message.toString();
+          let formattedMessage = `${timestamp} - ${topic}: `;
+          let jsonData = null;
+          try {
+            jsonData = JSON.parse(messageString);
+            formattedMessage += `<pre class="whitespace-pre-wrap">${JSON.stringify(jsonData, null, 2)}</pre>`;
+            updateAvailableKeys(jsonData); // Update available keys
+          } catch (e) {
+            formattedMessage += messageString;
+          }
+          const newMsg = { raw: `${timestamp} - ${topic}: ${messageString}`, formatted: formattedMessage, jsonData: jsonData };
+          // Add new message at the beginning of the array
+          messages.unshift(newMsg);
+          // Remove old messages if length exceeds 20
+          if (messages.length > 20) {
+            messages.pop();
+          }
+          updateMessages();
+          showNotification('New message received', 'info');
+          messageCount = messages.length;
+          document.getElementById('receivedMessageCount').textContent = messageCount;
+          if (messageString.includes("alert")) {
+            showNotification("Alert message received", 'warn');
+          }
+          // Immediately update chart if a key is selected
+          if (currentDataKey && jsonData && jsonData.hasOwnProperty(currentDataKey) && !isNaN(jsonData[currentDataKey])) {
+              updateChart(timestamp, Number(jsonData[currentDataKey])); // Use timestamp as label
+          }
+        });
+
+        client.on('error', (err) => {
+          console.error("Connection error:", err);
+          document.getElementById('connectionStatus').textContent = 'Disconnected';
+          document.getElementById('realTimeConnectionStatus').textContent = 'Disconnected';
+          showNotification(`Connection error: ${err.message}`, 'error');
+          hideLoadingIndicator();
+        });
+
+        client.on('close', () => {
+          document.getElementById('connectionStatus').textContent = 'Disconnected';
+          document.getElementById('realTimeConnectionStatus').textContent = 'Disconnected';
+          showNotification('Disconnected from MQTT broker', 'info');
+          client = null;
+          hideLoadingIndicator();
+        });
+      } catch (error) {
+        console.error('MQTT connection error:', error);
+        showNotification(`MQTT connection error: ${error.message}`, 'error');
+        hideLoadingIndicator();
+      }
+    }
+
+    function updateMessages(filterText = '') {
+      const filtered = messages.filter(msg => msg.raw.toLowerCase().includes(filterText.toLowerCase()));
+      const messagesContainer = document.getElementById('messagesContainer');
+      messagesContainer.innerHTML = '';
+
+      filtered.forEach(msg => {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message-item';
+        messageDiv.innerHTML = `<p onclick="showMessageDetails('${msg.raw.replace(/'/g, "\\'")}')">${msg.formatted}</p>`;
+        messagesContainer.appendChild(messageDiv);
+      });
+    }
+
+    function updateSubscriptions() {
+      document.getElementById('activeSubscriptions').innerHTML = subscriptions.map(t => `<li>${t}</li>`).join('');
+      document.getElementById('realTimeSubscriptions').innerHTML = subscriptions.map(t => `<li>${t}</li>`).join('');
+    }
+
+    function updateChart(label, value) {
+      if (chart) {
+        chart.data.labels.push(label);
+        chart.data.datasets[0].data.push(value);
+        chart.update();
+      }
+    }
+
+    function clearChart() {
+      if (chart) {
+        chart.data.labels = [];
+        chart.data.datasets[0].data = [];
+        chart.update();
+      }
+    }
+
+    function resetAll() {
+      messages = [];
+      updateMessages();
+      clearChart();
+      subscriptions = [];
+      updateSubscriptions();
+      messageCount = 0;
+      document.getElementById('receivedMessageCount').textContent = messageCount;
+      caCertificate = null;
+      clientCertificate = null;
+      clientKey = null;
+      document.getElementById('caFileName').textContent = '';
+      document.getElementById('clientCertName').textContent = '';
+      document.getElementById('clientKeyName').textContent = '';
+      document.getElementById('brokerUrl').value = '';
+      document.getElementById('username').value = '';
+      document.getElementById('password').value = '';
+      document.getElementById('subscribeTopic').value = '';
+      document.getElementById('publishTopic').value = '';
+      document.getElementById('publishMessage').value = '';
+      document.getElementById('filterMessages').value = '';
+      document.getElementById('retainMessage').checked = false;
+      availableKeys.clear();
+      updateDataKeyDropdown();
+      currentDataKey = ''; // Reset the current data key
+      document.getElementById('dataKey').value = ''; // Reset the selected option in the dropdown
+    }
+
+    function showMessageDetails(message) {
+      const modal = document.getElementById('messageModal');
+      document.getElementById('rawMessageContent').textContent = message;
+      modal.classList.remove('hidden');
+    }
+
+    function exportMessages() {
+      const format = document.getElementById('exportFormat').value;
+      let dataStr;
+      if (format === 'json') {
+        dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(messages.map(msg => msg.raw)));
+      } else if (format === 'xml') {
+        const xmlData = messages.map(msg => `<message>${msg.raw}</message>`).join('');
+        dataStr = "data:text/xml;charset=utf-8," + encodeURIComponent(`<messages>${xmlData}</messages>`);
+      }
+      let downloadAnchorNode = document.createElement('a');
+      downloadAnchorNode.setAttribute("href", dataStr);
+      downloadAnchorNode.setAttribute("download", `messages.${format}`);
+      document.body.appendChild(downloadAnchorNode);
+      downloadAnchorNode.click();
+      downloadAnchorNode.remove();
+    }
+
+    function importMessages(evt) {
+      const file = evt.target.files[0];
+      let reader = new FileReader();
+      reader.onload = function(e) {
+        const content = e.target.result;
+        try {
+          let rawMsg = JSON.parse(content);
+          messages = rawMsg.map(raw => ({ raw: raw, formatted: raw }));
+          updateMessages();
+        } catch (ex) {
+          showNotification("Error importing messages: " + ex.message, 'error');
+        }
+      }
+      reader.readAsText(file);
+    }
+
+    function showNotification(message, type = 'info') {
+      const notification = document.getElementById('notification');
+      notification.textContent = message;
+      notification.classList.remove('hidden');
+      setTimeout(() => {
+        notification.classList.add('hidden');
+      }, 3000);
+    }
+
+    function loadSettings() {
+      const brokerUrl = localStorage.getItem('brokerUrl');
+      const uname = localStorage.getItem('username');
+      const pwd = localStorage.getItem('password');
+      const darkMode = localStorage.getItem('darkMode') === 'true';
+      const protocol = localStorage.getItem('protocol') || 'ws://';
+      if (brokerUrl) document.getElementById('brokerUrl').value = brokerUrl;
+      if (uname) document.getElementById('username').value = uname;
+      if (pwd) document.getElementById('password').value = pwd;
+      if (darkMode) document.body.classList.add('dark-mode');
+      document.getElementById('protocol').value = protocol;
+    }
+
+    function saveSettings() {
+      brokerUrl = document.getElementById('brokerUrl').value;
+      const uname = document.getElementById('username').value;
+      const pwd = document.getElementById('password').value;
+      const darkMode = document.body.classList.contains('dark-mode');
+      const protocol = document.getElementById('protocol').value;
+      localStorage.setItem('brokerUrl', brokerUrl);
+      localStorage.setItem('username', uname);
+      localStorage.setItem('password', pwd);
+      localStorage.setItem('darkMode', darkMode);
+      localStorage.setItem('protocol', protocol);
+    }
+
+    function clearOnRefresh() {
+      document.getElementById('username').value = '';
+      document.getElementById('brokerUrl').value = '';
+      document.getElementById('password').value = '';
+    }
+
+    function updateAvailableKeys(jsonData) {
+      if (jsonData && typeof jsonData === 'object') {
+        Object.keys(jsonData).forEach(key => availableKeys.add(key));
+        updateDataKeyDropdown();
+      }
+    }
+
+    function updateDataKeyDropdown() {
+      const dataKeyDropdown = document.getElementById('dataKey');
+      const selectedValue = dataKeyDropdown.value; // Store the currently selected value
+      dataKeyDropdown.innerHTML = '<option value="">Select a Key</option>';
+      availableKeys.forEach(key => {
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = key;
+        if (key === selectedValue) {
+          option.selected = true; // Retain the selected value if it still exists
+        }
+        dataKeyDropdown.appendChild(option);
+      });
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', () => {
+      saveSettings();
+      connectMQTT();
+    });
+    document.getElementById('disconnectBtn').addEventListener('click', () => {
+      if (client) client.end();
+    });
+    document.getElementById('subscribeBtn').addEventListener('click', () => {
+      const topicsInput = document.getElementById('subscribeTopic').value;
+      const topics = topicsInput.split(',').map(topic => topic.trim()); // Split by comma and trim whitespace
+
+      if (client && client.connected && topics.length > 0) {
+        topics.forEach(topic => {
+          client.subscribe(topic);
+          subscriptions.push(topic);
+        });
+        updateSubscriptions();
+      } else {
+        showNotification("Not connected or no topics entered. Please connect and enter comma-separated topics.", 'warn');
+      }
+    });
+
+    document.getElementById('unsubscribeBtn').addEventListener('click', () => {
+        const topicsInput = document.getElementById('subscribeTopic').value;
+        const topics = topicsInput.split(',').map(topic => topic.trim());
+
+        if (client && client.connected && topics.length > 0) {
+            topics.forEach(topic => {
+                client.unsubscribe(topic);
+                subscriptions = subscriptions.filter(t => t !== topic);
+            });
+            updateSubscriptions();
+        } else {
+            showNotification("Not connected or no topics entered. Please connect and enter comma-separated topics.", 'warn');
+        }
+    });
+    document.getElementById('publishBtn').addEventListener('click', () => {
+      const topic = document.getElementById('publishTopic').value;
+      const msg = document.getElementById('publishMessage').value;
+      const qos = parseInt(document.getElementById('qosLevel').value);
+      const retain = document.getElementById('retainMessage').checked;
+      if (client && client.connected && topic && msg) {
+        client.publish(topic, msg, { qos, retain });
+      } else {
+        showNotification("Not connected. Please connect and enter topic/message.", 'warn');
+      }
+    });
+    document.getElementById('filterMessages').addEventListener('input', (e) => {
+      updateMessages(e.target.value);
+    });
+    document.getElementById('clearMessagesBtn').addEventListener('click', () => {
+      messages = [];
+      updateMessages();
+    });
+    document.getElementById('darkModeToggle').addEventListener('click', () => {
+      document.body.classList.toggle('dark-mode');
+      saveSettings();
+    });
+    document.getElementById('exportBtn').addEventListener('click', exportMessages);
+    document.getElementById('importFile').addEventListener('change', importMessages);
+    document.getElementById('clearChartBtn').addEventListener('click', clearChart);
+    document.getElementById('resetBtn').addEventListener('click', resetAll);
+    document.getElementById('showPassword').addEventListener('change', (e) => {
+      const pwdField = document.getElementById('password');
+      pwdField.type = e.target.checked ? 'text' : 'password';
+    });
+    document.getElementById('chartType').addEventListener('change', (e) => {
+      chartType = e.target.value;
+      if (chart) {
+        chart.destroy();
+      }
+      chartOptions.type = chartType;
+      initializeChart();
+    });
+    document.querySelector('.close').addEventListener('click', () => {
+      document.getElementById('messageModal').classList.add('hidden');
+    });
+    window.addEventListener('click', (e) => {
+      const modal = document.getElementById('messageModal');
+      if (e.target === modal) {
+        modal.classList.add('hidden');
+      }
+    });
+
+    // File Upload Handling for SSL Certificates
+    document.getElementById('caCertificate').addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        let reader = new FileReader();
+        reader.onload = (e) => {
+          caCertificate = e.target.result;
+          document.getElementById('caFileName').textContent = `Selected: ${file.name}`;
+        };
+        reader.readAsText(file);
+      } else {
+        caCertificate = null;
+        document.getElementById('caFileName').textContent = '';
+      }
+    });
+
+    document.getElementById('clientCertificate').addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        let reader = new FileReader();
+        reader.onload = (e) => {
+          clientCertificate = e.target.result;
+          document.getElementById('clientCertName').textContent = `Selected: ${file.name}`;
+        };
+        reader.readAsText(file);
+      } else {
+        clientCertificate = null;
+        document.getElementById('clientCertName').textContent = '';
+      }
+    });
+
+    document.getElementById('clientKey').addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        let reader = new FileReader();
+        reader.onload = (e) => {
+          clientKey = e.target.result;
+          document.getElementById('clientKeyName').textContent = `Selected: ${file.name}`;
+        };
+        reader.readAsText(file);
+      } else {
+        clientKey = null;
+        document.getElementById('clientKeyName').textContent = '';
+      }
+    });
+
+    document.getElementById('chartColor').addEventListener('change', (e) => {
+      chartData.datasets[0].borderColor = e.target.value;
+      chart.update();
+    });
+
+   document.getElementById('dataKey').addEventListener('change', (e) => {
+    currentDataKey = e.target.value; // Update the currently selected data key
+    clearChart(); // Clear the chart before populating with new data
+    if (currentDataKey) {
+        messages.forEach(msg => {
+            if (msg.jsonData && msg.jsonData.hasOwnProperty(currentDataKey)) {
+                const value = Number(msg.jsonData[currentDataKey]);
+                if (!isNaN(value)) {
+                    updateChart(msg.raw.split('-')[0], value);
+                } else {
+                    console.warn(`Value for key ${currentDataKey} is not a number: ${msg.jsonData[currentDataKey]}`);
+                }
+            }
+        });
+    }
+});
+
+    loadSettings();
+    updateMessages();
+    initializeChart();
+    clearOnRefresh();
+  </script>
+</body>
+</html>
